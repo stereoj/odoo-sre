@@ -1,0 +1,106 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "odoo.fullname" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      # NOTE: vanilla Odoo does not expose Prometheus metrics natively.
+      # This assumes the community `openupgrade`/`odoo_prometheus_exporter`
+      # style sidecar or module is installed — see DESIGN.md, "Observability"
+      # for the honest state of this and the fallback (blackbox probes +
+      # postgres_exporter) that doesn't depend on it.
+{{- end }}
+---
+{{- if .Values.monitoring.postgresExporter.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "odoo.fullname" . }}-postgres-exporter
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-exporter
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-exporter
+        {{- include "odoo.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+      containers:
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: DATA_SOURCE_URI
+              value: "$(PGHOST):$(PGPORT)/{{ .Values.postgresql.database }}?sslmode=disable"
+            - name: PGHOST
+              value: {{ .Values.postgresql.host | default (printf "%s-postgresql" (include "odoo.fullname" .)) | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgresql.port | quote }}
+            - name: DATA_SOURCE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentialsSecret }}
+                  key: username
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentialsSecret }}
+                  key: password
+          ports:
+            - name: metrics
+              containerPort: 9187
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "odoo.fullname" . }}-postgres-exporter
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: postgres-exporter
+    {{- include "odoo.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: 9187
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "odoo.fullname" . }}-postgres-exporter
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-exporter
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+{{- end }}

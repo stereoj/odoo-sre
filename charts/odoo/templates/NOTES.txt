@@ -1,0 +1,19 @@
+Odoo has been deployed.
+
+1. Check rollout status:
+   kubectl rollout status deployment/{{ include "odoo.fullname" . }}
+
+2. Watch pods come up (startupProbe allows up to 5 min for cold start):
+   kubectl get pods -l {{ include "odoo.selectorLabels" . }} -w
+
+3. The app is reachable at:
+   {{- range .Values.ingress.hosts }}
+   https://{{ .host }}
+   {{- end }}
+
+4. First-run database initialization (only once, on a fresh deployment):
+   kubectl exec -it deploy/{{ include "odoo.fullname" . }} -- \
+     odoo -c /tmp/odoo.conf -i base --stop-after-init -d odoo
+
+5. Verify the backup CronJob is scheduled:
+   kubectl get cronjob {{ include "odoo.fullname" . }}-backup

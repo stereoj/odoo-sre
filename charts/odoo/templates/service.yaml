@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "odoo.fullname" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "odoo.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8069
+      targetPort: http
+    - name: longpolling
+      port: 8072
+      targetPort: longpolling
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "odoo.fullname" . }}-filestore
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.filestore.accessMode }}
+  {{- if .Values.persistence.filestore.storageClass }}
+  storageClassName: {{ .Values.persistence.filestore.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.filestore.size }}
+---
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "odoo.fullname" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "odoo.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # avoid flapping on brief traffic dips
+{{- end }}
+---
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "odoo.fullname" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+{{- end }}

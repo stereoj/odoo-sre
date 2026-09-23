@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "odoo.fullname" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0        # never drop below full capacity during a rollout
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "odoo.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # ^ forces a pod restart whenever the ConfigMap changes, so config
+        # drift between the ConfigMap and running pods can't happen silently.
+    spec:
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 60  # allow in-flight requests to drain
+      initContainers:
+        - name: wait-for-db
+          image: postgres:16-alpine
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"; do
+                echo "waiting for postgres..."; sleep 2;
+              done
+          env:
+            - name: PGHOST
+              value: {{ .Values.postgresql.host | default (printf "%s-postgresql" (include "odoo.fullname" .)) | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgresql.port | quote }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentialsSecret }}
+                  key: username
+      containers:
+        - name: odoo
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command: ["/bin/sh", "/etc/odoo/entrypoint.sh"]
+          ports:
+            - name: http
+              containerPort: 8069
+            - name: longpolling
+              containerPort: 8072
+          env:
+            - name: PGHOST
+              value: {{ .Values.postgresql.host | default (printf "%s-postgresql" (include "odoo.fullname" .)) | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgresql.port | quote }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentialsSecret }}
+                  key: username
+            - name: PGPASSWORD_FILE
+              value: /run/secrets/db/password
+            - name: ODOO_ADMIN_PASSWORD_FILE
+              value: /run/secrets/admin/password
+          volumeMounts:
+            - name: config
+              mountPath: /etc/odoo
+              readOnly: true
+            - name: filestore
+              mountPath: /var/lib/odoo
+            - name: tmp
+              mountPath: /tmp
+            - name: db-secret
+              mountPath: /run/secrets/db
+              readOnly: true
+            - name: admin-secret
+              mountPath: /run/secrets/admin
+              readOnly: true
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "odoo.fullname" . }}-config
+            defaultMode: 0755
+        - name: filestore
+          persistentVolumeClaim:
+            claimName: {{ include "odoo.fullname" . }}-filestore
+        - name: tmp
+          emptyDir: {}
+        - name: db-secret
+          secret:
+            secretName: {{ .Values.secrets.dbCredentialsSecret }}
+            items:
+              - key: password
+                path: password
+        - name: admin-secret
+          secret:
+            secretName: {{ .Values.secrets.adminPasswordSecret }}
+            items:
+              - key: password
+                path: password
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "odoo.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+                # spreads replicas across nodes so a single node failure
+                # can't take down every Odoo pod at once

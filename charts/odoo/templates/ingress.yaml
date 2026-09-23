@@ -1,0 +1,29 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "odoo.fullname" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "odoo.fullname" $ }}
+                port:
+                  name: http
+          {{- end }}
+    {{- end }}
+{{- end }}

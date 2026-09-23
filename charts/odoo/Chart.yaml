@@ -1,0 +1,8 @@
+apiVersion: v2
+name: odoo
+description: Production-ready Helm chart for Odoo, designed for multi-tenant SaaS scale
+type: application
+version: 0.1.0
+appVersion: "17.0"
+maintainers:
+  - name: Andrii Lukanin

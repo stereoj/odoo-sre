@@ -1,0 +1,99 @@
+# Local reviewer aid — NOT the production deliverable (see ../charts/odoo for that).
+# Mirrors the same core decisions (non-root, secrets via files, healthchecks,
+# named volumes for persistence) so it's a fair 2-minute preview, not a
+# separate, inconsistent design.
+#
+# Usage:
+#   cp .env.example .env   # fill in real values
+#   docker compose up -d
+#   docker compose logs -f odoo
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    user: "999:999"
+    environment:
+      POSTGRES_DB: odoo
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  odoo:
+    image: odoo:17.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HOST: postgres
+      PORT: 5432
+      USER: odoo
+      PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+      - admin_password
+    volumes:
+      - odoo-filestore:/var/lib/odoo
+      - ./config/odoo.conf:/etc/odoo/odoo.conf:ro
+    ports:
+      - "127.0.0.1:8069:8069" # bound to localhost only; a reverse proxy with TLS sits in front in any real deployment
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8069/web/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - internal
+
+  backup:
+    image: postgres:16-alpine
+    restart: "no"
+    depends_on:
+      - postgres
+    environment:
+      PGHOST: postgres
+      PGUSER: odoo
+      PGPASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - ./backups:/backup
+      - odoo-filestore:/var/lib/odoo:ro
+    entrypoint: ["/bin/sh", "-c", "while true; do sleep 86400; done"]
+    # In this local aid, trigger manually: docker compose exec backup /scripts/backup.sh
+    # In production, this logic is the Kubernetes CronJob in charts/odoo/templates/backup-cronjob.yaml
+    networks:
+      - internal
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  admin_password:
+    file: ./secrets/admin_password.txt
+
+volumes:
+  pgdata:
+  odoo-filestore:
+
+networks:
+  internal:
+    driver: bridge

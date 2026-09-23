@@ -1,0 +1,60 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "odoo.fullname" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only the ingress controller may reach Odoo directly — pods don't accept
+    # traffic from anywhere else in the cluster, including other tenants'
+    # namespaces if this chart is reused per-tenant.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8069
+        - protocol: TCP
+          port: 8072
+    # Prometheus needs to scrape metrics
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8069
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Postgres (in-cluster or managed, adjust CIDR/selector to match)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # HTTPS egress for email relays, external APIs, license checks, etc.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+{{- end }}

@@ -1,0 +1,135 @@
+# Default values for the odoo chart.
+# These are safe, conservative defaults for a single-tenant deployment.
+# See DESIGN.md for the multi-tenant scaling model.
+
+replicaCount: 2
+
+image:
+  repository: odoo
+  tag: "17.0"
+  pullPolicy: IfNotPresent
+
+# Odoo runs as uid 101 (odoo) in the official image — we enforce this explicitly
+# rather than trusting the image default, so the Pod fails closed if the image
+# ever changes its default user.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  fsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+persistence:
+  filestore:
+    enabled: true
+    size: 20Gi
+    storageClass: "" # cluster default; use a network-backed class (e.g. EBS gp3 / PD-SSD)
+    accessMode: ReadWriteMany # multiple Odoo pods share the same filestore
+
+postgresql:
+  enabled: true
+  host: "" # leave empty to use the bundled StatefulSet; set to use managed RDS/CloudSQL instead
+  port: 5432
+  database: odoo
+  existingSecret: odoo-db-credentials # never store credentials in values.yaml directly
+  persistence:
+    size: 50Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+secrets:
+  # Names of externally-managed secrets (e.g. via External Secrets Operator / Sealed Secrets).
+  # This chart never generates or stores plaintext secrets itself.
+  adminPasswordSecret: odoo-admin-credentials
+  dbCredentialsSecret: odoo-db-credentials
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "128m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+  hosts:
+    - host: odoo.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: odoo-tls
+      hosts:
+        - odoo.example.com
+
+networkPolicy:
+  enabled: true
+
+monitoring:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+  postgresExporter:
+    enabled: true
+
+backup:
+  enabled: true
+  schedule: "0 2 * * *" # daily at 02:00
+  retentionDays: 14
+  destination:
+    # Backups ship off-cluster immediately; a PVC snapshot alone is not a backup strategy.
+    type: s3
+    bucket: "CHANGEME-odoo-backups"
+    region: "eu-central-1"
+
+livenessProbe:
+  httpGet:
+    path: /web/health
+    port: http
+  initialDelaySeconds: 60
+  periodSeconds: 30
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /web/health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /web/health
+    port: http
+  periodSeconds: 10
+  failureThreshold: 30 # allow up to 5 minutes for a cold start / module install

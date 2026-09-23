@@ -1,0 +1,101 @@
+{{- if and .Values.postgresql.enabled (not .Values.postgresql.host) }}
+# Self-hosted PostgreSQL, used only when postgresql.host is empty.
+# In production at any real scale, prefer a managed service (RDS / Cloud SQL)
+# for automated failover, PITR, and patching — see DESIGN.md for the tradeoff.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "odoo.fullname" . }}-postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "odoo.fullname" . }}-postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgresql
+        {{- include "odoo.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: postgresql
+          image: postgres:16-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 5432
+              name: postgresql
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.database }}
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentialsSecret }}
+                  key: username
+            - name: POSTGRES_PASSWORD_FILE
+              value: /run/secrets/db/password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: db-secret
+              mountPath: /run/secrets/db
+              readOnly: true
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: db-secret
+          secret:
+            secretName: {{ .Values.secrets.dbCredentialsSecret }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.postgresql.persistence.storageClass }}
+        storageClassName: {{ .Values.postgresql.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "odoo.fullname" . }}-postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  clusterIP: None  # headless — StatefulSet gets a stable DNS identity
+  selector:
+    app.kubernetes.io/name: postgresql
+    {{- include "odoo.selectorLabels" . | nindent 4 }}
+  ports:
+    - port: 5432
+      targetPort: postgresql
+{{- end }}

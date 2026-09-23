@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "odoo.fullname" . }}-config
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+data:
+  # NOTE: Odoo's config parser does not do env-var substitution, so credentials
+  # are never templated into this file. They are passed at process start via
+  # environment variables (HOST/PORT/USER/PASSWORD_FILE, ADMIN_PASSWORD_FILE),
+  # which entrypoint.sh renders into the real odoo.conf using envsubst into a
+  # tmpfs path before exec'ing odoo. This file only holds non-secret tuning.
+  odoo.conf.template: |
+    [options]
+    admin_passwd = ${ODOO_ADMIN_PASSWORD}
+    db_host = ${PGHOST}
+    db_port = ${PGPORT}
+    db_user = ${PGUSER}
+    db_password = ${PGPASSWORD}
+    db_maxconn = 20
+    ; Workers enable true multi-process concurrency with per-request CPU/time
+    ; limits. Threaded/dev mode (workers = 0) has no request isolation: one
+    ; slow request can block the entire instance, which is how a single
+    ; tenant's bad report query becomes a platform-wide outage.
+    workers = 4
+    max_cron_threads = 1
+    limit_time_cpu = 60
+    limit_time_real = 120
+    limit_memory_soft = 2147483648
+    limit_memory_hard = 2684354560
+    proxy_mode = True
+    list_db = False
+    logfile = /dev/stdout
+    log_level = info
+    log_handler = :INFO
+
+  entrypoint.sh: |
+    #!/bin/sh
+    set -eu
+    # Secrets arrive as files (via Secret volume mounts), matching the
+    # official image's *_FILE convention — never as plaintext env vars in
+    # `kubectl describe pod` or process listings.
+    export ODOO_ADMIN_PASSWORD="$(cat "${ODOO_ADMIN_PASSWORD_FILE}")"
+    export PGPASSWORD="$(cat "${PGPASSWORD_FILE}")"
+
+    # Config is rendered into a writable tmpfs path, since the container's
+    # root filesystem is mounted read-only (see securityContext).
+    envsubst < /etc/odoo/odoo.conf.template > /tmp/odoo.conf
+
+    unset ODOO_ADMIN_PASSWORD PGPASSWORD
+    exec odoo -c /tmp/odoo.conf "$@"
