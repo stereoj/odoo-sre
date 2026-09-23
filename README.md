@@ -1,4 +1,4 @@
-# Odoo SRE & Infrastructure Challenge — much. Consulting
+# Odoo SRE & Infrastructure
 
 Production-ready Odoo deployment, built for the stated growth target
 (50 → 500+ customers, thousands of servers).
