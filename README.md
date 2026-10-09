@@ -1,9 +1,9 @@
-# Odoo SRE & Infrastructure Challenge
+# Odoo SRE & Infrastructure
 
 Production-ready Odoo deployment, built for the stated growth target
 (50 → 500+ customers, thousands of servers).
 
-**Start here:** [`DESIGN.md`](./DESIGN.md) — explains every decision,
+[`DESIGN.md`](./DESIGN.md) — explains every decision,
 assumption, and known trade-off.
 
 ## Contents
